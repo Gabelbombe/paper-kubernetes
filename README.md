@@ -16,9 +16,7 @@ This Kubernetes setup inspired by _[Kubernetes the Hard way](https://github.com/
 
 ### Target platform
 
-<div style='float:right'>
-  ![Kubernetes Infrastructure](assets/k8snthw-infrastructure.png "Terraform Kubernetes Infrastructure")
-</div>
+<img style='float:right' src='assets/k8snthw-infrastructure.png' />
 
 <div style='float:left'>
 Infrastructure
