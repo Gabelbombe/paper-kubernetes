@@ -378,6 +378,9 @@ We have 9 EC instances (hosts, in Ansible terms), 3 of each type (group, for Ans
 All hosts need the certificates we generated, for HTTPS.
 
 <img src='assets/k8snthw-components.png' />
+<br />
+<br />
+
 
 First of all, we have to install Python 2.5+ on all machines.
 
@@ -460,6 +463,7 @@ inventory = ./hosts/
 ...
 ```
 
+
 ### Bootstrapping Ansible
 
 Now we are ready to execute the playbook (`infra.yaml`) to install all components. The first step is installing Python on all boxes with a raw module. It executes a shell command remotely, via SSH, with no bell and whistle.
@@ -470,7 +474,7 @@ Now we are ready to execute the playbook (`infra.yaml`) to install all component
 
   tasks:
   - name: Update distros
-    raw: "apt-get update -y"
+    raw: "apt-get -y update"
     become: true
     retries: 10
     delay: 20
@@ -478,3 +482,157 @@ Now we are ready to execute the playbook (`infra.yaml`) to install all component
   - name: Install Python
     raw: "apt-get -y -q install python"
     become: true
+```
+
+
+### Installing and configuring Kubernetes components: Roles
+
+The second part of the playbook install and configure all Kubernetes components. It plays different roles on hosts, depending on groups. Note that groups and roles have identical names, but this is not a general rule.
+
+
+```yml
+- hosts: etcd
+  roles:
+    - common
+    - etcd
+
+- hosts: controller
+  roles:
+    - common
+    - controller
+
+- hosts: worker
+  roles:
+    - common
+    - worker
+```
+
+Ansible executes the common role (omitted here) on all machines. All other roles do the real job. They install, set up and start services using `systemd`:
+
+- Copy the certificates and key (the ones we generated with Terraform)
+- Download service binaries directly from the official source, unpack and copy them to the right directory
+- Create the _systemd_ unit file, using a template
+- Bump both _systemd_ and the service
+- Verify the service is running
+
+Here are the tasks of `etcd` role . Other roles are not substantially different.
+
+```yml
+- name: Create etcd config dir
+  file: path=/etc/etcd state=directory
+  become: true
+
+- name: Copy certificates
+  copy:
+    src: "{{ playbook_dir }}/../cert/{{ item }}"
+    dest: "/etc/etcd/"
+  become: true
+  with_items:
+    - ca.pem
+    - kubernetes.pem
+    - kubernetes-key.pem
+
+- name: Download etcd binaries
+  get_url:
+    url: "https://github.com/coreos/etcd/releases/download/v3.0.1/etcd-v3.0.-linux-amd64.tar.gz"
+    dest: "/usr/local/src"
+  become: true
+
+- name: Unpack etcd binaries
+  unarchive:
+    copy: no
+    src: "/usr/local/src/etcd-v3.0.-linux-amd64.tar.gz"
+    dest: "/usr/local/src/"
+    creates: "/usr/local/src/etcd-v3.0.-linux-amd64/etcd"
+  become: true
+
+- name: Copy etcd binaries
+  copy:
+    remote_src: true
+    src: "/usr/local/src/etcd-v3.0.-linux-amd64/{{ item }}"
+    dest: "/usr/bin"
+    owner: root
+    group: root
+    mode: 0755
+  with_items:
+    - etcd
+    - etcdctl
+  become: true
+
+- name: Create etcd data dir
+  file: path=/var/lib/etcd state=directory
+  become: true
+
+- name: Add etcd systemd unit
+  template:
+    src: etcd.service.j2
+    dest: /etc/systemd/system/etcd.service
+    mode: 700
+  become: true
+
+- name: Reload systemd
+  command: systemctl daemon-reload
+  become: true
+
+- name: Enable etcd service
+  command: systemctl enable etcd
+  become: true
+
+- name: Restart etcd
+  service:
+    name: etcd
+    state: restarted
+    enabled: yes
+  become: true
+
+- name: Wait for etcd listening
+  wait_for: port=2379 timeout=60
+
+- name: Verify etcd cluster health
+  shell: etcdctl --ca-file=/etc/etcd/ca.pem cluster-health
+  register: cmd_result
+  until: cmd_result.stdout.find("cluster is healthy") != -1
+  retries: 5
+  delay: 5
+```
+
+We generate `etcd.service` from a template. Ports are hardwired (may be externalised as variables), but hosts IP addresses are _[facts](http://docs.ansible.com/ansible/playbooks_variables.html#information-discovered-from-systems-facts)_ gathered by Ansible.
+
+```ini
+# {{ ansible_managed }}
+[Unit]
+Description=etcd
+Documentation=https://github.com/coreos
+
+[Service]
+ExecStart=/usr/bin/etcd --name {{ inventory_hostname }} \
+  --cert-file=/etc/etcd/kubernetes.pem \
+  --key-file=/etc/etcd/kubernetes-key.pem \
+  --peer-cert-file=/etc/etcd/kubernetes.pem \
+  --peer-key-file=/etc/etcd/kubernetes-key.pem \
+  --trusted-ca-file=/etc/etcd/ca.pem \
+  --peer-trusted-ca-file=/etc/etcd/ca.pem \
+  --initial-advertise-peer-urls https://{{ ansible_eth0.ipv4.address }}:2380 \
+  --listen-peer-urls https://{{ ansible_eth0.ipv4.address }}:2380 \
+  --listen-client-urls https://{{ ansible_eth0.ipv4.address }}:2379,http://127.0.0.1:2379 \
+  --advertise-client-urls https://{{ ansible_eth0.ipv4.address }}:2379 \
+  --initial-cluster-token etcd-cluster-0 \
+  --initial-cluster {% for node in groups['etcd'] %}{{ node }}=https://{{ hostvars[node].ansible_eth0.ipv4.address }}:2380{% if not loop.last %},{% endif %}{% endfor %} \
+  --initial-cluster-state new \
+  --data-dir=/var/lib/etcd
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Known simplifications
+
+The most significant simplifications, compared to a real world project, concern two aspects:
+
+- Ansible workflow is simplistic: at every execution, it restarts all services. In a production environment, you should add guard conditions, trigger operations only when required (e.g. when the configuration has changed) and avoid restarting all nodes of a cluster at the same time.
+- As in the first part, using fixed internal DNS names, rather than IPs, would be more realistic.
+
+
+**Congradulations!** The `infra.yml` playbook has installed and run all the services required by Kubernetes.
