@@ -1,4 +1,4 @@
-# K8s from scratch to AWS with Terraform and Ansible
+# Let's build Kubernetes from A-Z with Terraform and Ansible
 
 ### The goal
 
@@ -228,6 +228,116 @@ resource "aws_elb" "kubernetes_api" {
     timeout             = 15
     target              = "HTTP:8080/healthz"
     interval            = 30
+  }
+}
+```
+
+The ELB works at TCP level (layer 4), forwarding connection to the destination. The HTTPS connection is terminated by the service, not by the ELB. The ELB need no certificate.
+
+### Security
+
+The security is very simplified in this project. We have two Security Groups: one for all instances and another for the Kubernetes API Load Balancer (some rule omitted here).
+
+```hcl
+resource "aws_security_group" "kubernetes" {
+  vpc_id = "${aws_vpc.kubernetes.id}"
+  name   = "kubernetes"
+
+  # Allow all outbound
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Allow all internal
+  ingress {
+    from_port = 0
+    to_port   = 0
+    protocol  = "-1"
+    self      = true
+  }
+
+  # Allow all traffic from the API ELB
+  ingress {
+    from_port       = 0
+    to_port         = 0
+    protocol        = "-1"
+    security_groups = ["${aws_security_group.kubernetes_api.id}"]
+  }
+
+  # Allow all traffic from control host IP
+  ingress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["${var.control_cidr}"]
+  }
+}
+
+resource "aws_security_group" "kubernetes_api" {
+  vpc_id = "${aws_vpc.kubernetes.id}"
+  name   = "kubernetes-api"
+
+  # Allow inbound traffic to the port used by Kubernetes API HTTPS
+  ingress {
+    from_port   = 6443
+    to_port     = 6443
+    protocol    = "TCP"
+    cidr_blocks = ["${var.control_cidr}"]
+  }
+
+  # Allow all outbound traffic
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+```
+
+All instances are directly accessible from outside the VPC: not acceptable for any production environment. But security is not entirely lax: inbound traffic is allowed only from one IP address: the public IP address you are connecting from. This address is configured by the Terraform variable `control_cidr`. Please, read the [project documentation](https://github.com/ehime/terraform-kubernetes/blob/master/README.md) for further explanations.
+
+No matter how lax, this configuration is tighter than the default security set up by [Kubernetes cluster creation script](http://kubernetes.io/docs/getting-started-guides/aws/).
+
+
+### Self-signed Certificates
+
+Communication between Kubernetes components and control API, all use HTTPS. We need a server certificate for it. It is self-signed with our own private CA. Terraform generates a CA certificate, a server key+certificate and signs the latter with the CA. The process uses [CFSSL](https://github.com/cloudflare/cfssl).
+
+The interesting point here is the template-based generation of certificates. I’m using [Data Sources](https://www.terraform.io/docs/configuration/data-sources.html), a feature introduced by Terraform 0.7.
+
+
+```hcl
+# Generate Certificates
+data "template_file" "certificates" {
+  template   = "${file("${path.module}/template/kubernetes-csr.json")}"
+  depends_on = ["aws_elb.kubernetes_api", "aws_instance.etcd", "aws_instance.controller", "aws_instance.worker"]
+
+  vars {
+    kubernetes_api_elb_dns_name = "${aws_elb.kubernetes_api.dns_name}"
+    kubernetes_cluster_dns      = "${var.kubernetes_cluster_dns}"
+    etcd0_ip                    = "${aws_instance.etcd.0.private_ip}"
+    ...
+    controller0_ip              = "${aws_instance.controller.0.private_ip}"
+    ...
+    worker2_ip                  = "${aws_instance.worker.2.private_ip}"
+  }
+}
+
+resource "null_resource" "certificates" {
+  triggers {
+    template_rendered = "${ data.template_file.certificates.rendered }"
+  }
+
+  provisioner "local-exec" {
+    command = "echo '${ data.template_file.certificates.rendered }' > ../cert/kubernetes-csr.json"
+  }
+
+  provisioner "local-exec" {
+    command = "cd ../cert; cfssl gencert -initca ca-csr.json | cfssljson -bare ca; cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json -profile=kubernetes kubernetes-csr.json | cfssljson -bare kubernetes"
   }
 }
 ```
