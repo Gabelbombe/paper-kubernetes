@@ -1,8 +1,8 @@
 # Let's build Kubernetes from A-Z with Terraform and Ansible
 
-### Part 1: The Infrastructure
+## _Part 1: The Infrastructure_
 
-#### The goal
+### The goal
 
 The purpose of this series of articles is presenting a simple, but realistic example of how to provision a Kubernetes cluster on AWS, using Terraform and Ansible. This is an educational tool, not a production-ready solution nor a simple way to quickly deploy Kubernetes.
 
@@ -11,12 +11,12 @@ I will walk through the sample project, describing the steps to automatise the p
 The complete working project is available here: [terraform-kubernetes](https://github.com/ehime/terraform-kubernetes). Please, read the documentation included in the repository, describing requirements and step by step process to execute it.
 
 
-#### Starting point
+### Starting point
 
 This Kubernetes setup inspired by _[Kubernetes the Hard way](https://github.com/kelseyhightower/kubernetes-the-hard-way)_, by [Kelsey Hightower](https://github.com/kelseyhightower) from Google. The original tutorial is for Google Cloud. My goal is demonstrating how to automate the process on AWS, so I "translated" it to AWS and transformed the manual steps into Terraform and Ansible code.
 
 
-#### Target platform
+### Target platform
 
 <div style='width:800px; margin: 0 auto;'>
   <div style='width: 200px; height: 400px; float: left;'>
@@ -35,7 +35,7 @@ This Kubernetes setup inspired by _[Kubernetes the Hard way](https://github.com/
 <div style="clear:both; padding-top:200px"/>
 
 
-#### Automation Tools
+### Automation Tools
 
 For our example I'll be using [Terraform](https://www.terraform.io/intro/index.html) and [Ansible](http://docs.ansible.com/ansible/intro.html) for many reasons:
 
@@ -46,14 +46,14 @@ For our example I'll be using [Terraform](https://www.terraform.io/intro/index.h
 Terraform and Ansible overlap. I will use Terraform to provision infrastructure resources, then pass the baton to Ansible, to install and configure software components.
 
 
-#### Terraform to provision infrastructure
+### Terraform to provision infrastructure
 
 Terraform allow us to describe the target infrastructure; then it takes care to create, modify or destroy any required resource to match our blueprint. Regardless its declarative nature, Terraform allows some [programming patterns](https://github.com/ehime/paper-designpatterns/blob/master/README.md). In this project, resources are in grouped in files; constants are externalised as variables and we will use of templating. We are not going to use Terraform Modules.
 
 The code snippets have been simplified. Please refer to the [code repository](https://github.com/ehime/terraform-kubernetes/tree/master/terraform) for the complete version.
 
 
-#### Create VPC and networking layer
+### Create VPC and networking layer
 
 After specifying the AWS provider and the region (omitted here), the first step is defining the VPC, the single subnet and an Internet Gateway.
 
@@ -101,7 +101,7 @@ resource "aws_key_pair" "default_keypair" {
 ```
 
 
-#### Create EC2 Instances
+### Create EC2 Instances
 
 I'm using an official AMI for Ubuntu 16.04 to keep it simple. Here is, for example, the definition of `etcd` instances.
 
@@ -163,7 +163,7 @@ resource "aws_iam_instance_profile" "kubernetes" {
 }
 ```
 
-#### Static vs. dynamic IP address vs. internal DNS
+### Static vs. dynamic IP address vs. internal DNS
 
 Instances have a static private IP address. I'm using a simple address pattern to make them human-friendly: 10.43.0.1x are etcd instances, `10.43.0.2x` Controllers and `10.43.0.3x` Workers (aka Kubernetes Nodes or Minions), but this is not a requirement.
 
@@ -172,14 +172,14 @@ A static address is required to have a fixed "handle" for each instance. In a bi
 Real-world projects use internal DNS names as stable handles, not static IP. But to keep this project simple, I will use static IP addresses, assigned by Terraform, and no DNS.
 
 
-#### Installing Python 2.x?
+### Installing Python 2.x?
 
 Ansible requires Python 2.5+ on managed machines. Ubuntu 16.04 comes with Python 3 that not compatible with Ansible and  we have to install it before running any playbook.
 
 Terraform has a `remote-exec` provisioner. We might execute `apt-get install python...` on the newly provisioned instances. But the provisioner is not very smart. So, the option I adopted is making Ansible _"pulling itself over the fence by its bootstraps"_, and install Python with a raw module.
 
 
-#### Resource tagging
+### Resource tagging
 
 Every resource has multiple tags assigned (omitted in the snippets, above):
 
@@ -204,7 +204,7 @@ resource "aws_instance" "worker" {
 }
 ```
 
-#### A load balancer for Kubernetes API
+### A load balancer for Kubernetes API
 
 For High Availability, we have multiple instances running Kubernetes API server and we expose the control API using an external Elastic Load Balancer.
 
@@ -236,7 +236,7 @@ resource "aws_elb" "kubernetes_api" {
 
 The ELB works at TCP level (layer 4), forwarding connection to the destination. The HTTPS connection is terminated by the service, not by the ELB. The ELB need no certificate.
 
-#### Security
+### Security
 
 The security is very simplified in this project. We have two Security Groups: one for all instances and another for the Kubernetes API Load Balancer (some rule omitted here).
 
@@ -305,7 +305,7 @@ All instances are directly accessible from outside the VPC: not acceptable for a
 No matter how lax, this configuration is tighter than the default security set up by [Kubernetes cluster creation script](http://kubernetes.io/docs/getting-started-guides/aws/).
 
 
-#### Self-signed Certificates
+### Self-signed Certificates
 
 Communication between Kubernetes components and control API, all use HTTPS. We need a server certificate for it. It is self-signed with our own private CA. Terraform generates a CA certificate, a server key+certificate and signs the latter with the CA. The process uses [CFSSL](https://github.com/cloudflare/cfssl).
 
@@ -349,7 +349,7 @@ All components use the same certificate, so it has to include all addresses (IP 
 CFSSL command line utility generates `.pem` files for CA certificate, server key and certificate. In the following articles, we will see how they are uploaded into all machines and used by Kubernetes CLI to connect to the API.
 
 
-#### Known simplifications and limitations
+### Known simplifications and limitations
 
 Let's sum up the most significant simplifications introduced in this part of the project:
 
@@ -360,9 +360,9 @@ Let's sum up the most significant simplifications introduced in this part of the
 
 
 
-### Part 2: The Provisioner
+## _Part 2: The Provisioner_
 
-#### Installing Kubernetes
+### Installing Kubernetes
 
 We have at this point, created all AWS resources using Terraform. No Kubernetes component has been installed yet.
 
@@ -384,13 +384,44 @@ First of all, we have to install Python 2.5+ on all machines.
 
 ### Ansible project organisation
 
-The Ansible part of the project is organised as suggested by Ansible documentation. We also have multiple playbooks, to run independently:
+The Ansible part of the project is organised as [suggested by Ansible documentation](http://docs.ansible.com/ansible/playbooks_best_practices.html#directory-layout). We also have multiple playbooks, to run independently:
 
-- Bootstrap Ansible (install Python). Install, configure and start all the required components (infra.yaml)
-- Configure Kubernetes CLI (kubectl) on your machine (kubectl.yaml)
-- Setup internal routing between containers (kubernetes-routing.yaml)
-- Smoke test it, deploying a nginx service (kubernetes-nginx.yaml) + manual operations
+- Bootstrap Ansible (install Python). Install, configure and start all the required components (`infra.yml`)
+- Configure Kubernetes CLI (kubectl) on your machine (`kubectl.yml`)
+- Setup internal routing between containers (`kubernetes-routing.yml`)
+- Smoke test it, deploying a nginx service (`kubernetes-nginx.yml`) + manual operations
 
-This section walks through the first playbook (infra.yml).
+This section walks through the first playbook (`infra.yml`).
 
 The code snippets have been simplified. Please refer to the [code repository](https://github.com/ehime/terraform-kubernetes/tree/master/ansible) for the complete version.
+
+
+### Installing Kubernetes components
+
+The first playbook takes care of bootstrapping Ansible and installing Kubernetes components. Actual tasks are separate in roles: `common` (executed on all hosts); one role per machine type: `controller`, `etcd` and `worker`.
+
+Before proceeding, we have to understand how Ansible identifies and find hosts.
+
+
+### Dynamic Inventory
+
+Ansible works on groups of hosts. Each host must have a unique handle and address to SSH into the box.
+
+The most basic approach is using a [Static Inventory](http://docs.ansible.com/ansible/intro_inventory.html#hosts-and-groups), a hardwired file associating groups to hosts and specifying the IP address (or DNS name) of each host.
+
+A more realistic approach uses a [Dynamic Inventory](http://docs.ansible.com/ansible/intro_dynamic_inventory.html), and a static file to define groups, based on instance tags. For AWS, Ansible provides an [EC2 AWS Dynamic Inventory script](http://docs.ansible.com/ansible/intro_dynamic_inventory.html#example-aws-ec2-external-inventory-script) out-of-the-box.
+
+The configuration file `ec2.ini`, downloaded from Ansible repo, requires some change. It is very long, so here are the modified parameters only:
+
+```ini
+[ec2]
+instance_filters         = tag:ansibleFilter=Kubernetes01
+regions                  = us-east-1
+destination_variable     = ip_address
+vpc_destination_variable = ip_address
+hostname_variable        = tag_ansibleNodeName
+```
+
+Note we use instance tags to filter and identify hosts and we use IP addresses for connecting to the machines.
+
+A separate file defines groups, based on instance tags. It creates nicely named groups, `controller`, `etcd` and `worker` (we might have used groups weirdly called `tag_ansibleNodeType_worker...`). If we add new hosts to a group, this file remains untouched.
