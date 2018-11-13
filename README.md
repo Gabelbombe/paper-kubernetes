@@ -90,3 +90,144 @@ resource "aws_route_table_association" "kubernetes" {
 ```
 
 We also have to import the Key-pair that will be used for all Instances, to be able to SSH into them. The Public Key must correspond to the Identity file loaded into SSH Agent (please, see the [README](https://github.com/ehime/terraform-kubernetes/blob/master/README.md) for more details)
+
+```hcl
+resource "aws_key_pair" "default_keypair" {
+  key_name   = "my-keypair"
+  public_key = "ssh-rsa AA....zzz"
+}
+```
+
+
+### Create EC2 Instances
+
+I’m using an official AMI for Ubuntu 16.04 to keep it simple. Here is, for example, the definition of `etcd` instances.
+
+```hcl
+variable "deletion_protection" {
+  description = "The database can't be deleted when this value is set to true."
+  default     = false
+}
+
+resource "aws_instance" "etcd" {
+  count         = 3
+  ami           = "ami-1967056a" // Unbuntu 16.04 LTS HVM, EBS-SSD
+  instance_type = "t2.micro"
+
+  subnet_id                   = "${aws_subnet.kubernetes.id}"
+  private_ip                  = "${cidrhost("10.43.0.0/16", 10 + count.index)}"
+  associate_public_ip_address = true
+
+  availability_zone      = "us-east-1a"
+  vpc_security_group_ids = ["${aws_security_group.kubernetes.id}"]
+  key_name               = "my-keypair"
+}
+```
+
+Other instances, `controller` and `worker`, are no different, except for one important detail: Workers have `source_dest_check = false` to allow sending packets from IPs not matching the IP assigned to the machine by AWS (for Inter-Container communication).
+
+```hcl
+resource "aws_iam_role" "kubernetes" {
+  name = "kubernetes"
+
+  assume_role_policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [ { "Effect": "Allow", "Principal": { "Service": "ec2.amazonaws.com" }, "Action": "sts:AssumeRole" } ]
+}
+EOF
+}
+
+resource "aws_iam_role_policy" "kubernetes" {
+  name = "kubernetes"
+  role = "${aws_iam_role.kubernetes.id}"
+
+  policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    { "Action" : ["ec2:*"], "Effect": "Allow", "Resource": ["*"] },
+    { "Action" : ["elasticloadbalancing:*"], "Effect": "Allow", "Resource": ["*"] },
+    { "Action": "route53:*", "Effect": "Allow",  "Resource": ["*"] },
+    { "Action": "ecr:*", "Effect": "Allow", "Resource": "*" }
+  ]
+}
+EOF
+}
+
+resource "aws_iam_instance_profile" "kubernetes" {
+  name  = "kubernetes"
+  roles = ["${aws_iam_role.kubernetes.name}"]
+}
+```
+
+### Static vs. dynamic IP address vs. internal DNS
+
+Instances have a static private IP address. I’m using a simple address pattern to make them human-friendly: 10.43.0.1x are etcd instances, `10.43.0.2x` Controllers and `10.43.0.3x` Workers (aka Kubernetes Nodes or Minions), but this is not a requirement.
+
+A static address is required to have a fixed "handle" for each instance. In a big project, you have to create and maintain a “map” of assigned IPs  and be careful to avoid clashes. It sounds easy, but it could become messy in a big project. On the flip side, dynamic IP addresses change if (when) VMs restart for any uncontrollable event (hardware failure, the provider moving to different physical hardware, etc.), therefore DNS entry must be managed by the VM, not by Terraform... but this a different story.
+
+Real-world projects use internal DNS names as stable handles, not static IP. But to keep this project simple, I will use static IP addresses, assigned by Terraform, and no DNS.
+
+
+### Installing Python 2.x?
+
+Ansible requires Python 2.5+ on managed machines. Ubuntu 16.04 comes with Python 3 that not compatible with Ansible and  we have to install it before running any playbook.
+
+Terraform has a `remote-exec` provisioner. We might execute `apt-get install python...` on the newly provisioned instances. But the provisioner is not very smart. So, the option I adopted is making Ansible _"pulling itself over the fence by its bootstraps"_, and install Python with a raw module.
+
+
+### Resource tagging
+
+Every resource has multiple tags assigned (omitted in the snippets, above):
+
+- `ansibleFilter`: fixed for all instances (`"Kubernetes01"` by default), used by Ansible Dynamic Inventory to filter instances belonging to this project.
+- `ansibleNodeType`: define the type (group) of the instance, e.g. `"worker"`. Used by Ansible to group different hosts of the same type.
+- `ansibleNodeName`: readable, unique identifier of an instance (e.g. `"worker2"`). Used by Ansible Dynamic Inventory as replacement of hostname.
+- `Name`: identifies the single resource (e.g. `"worker-2"`). No functional use, but useful on AWS console.
+- `Owner`: your name or anything identifying you, if you are sharing the same AWS account with other teammates. No functional use, but handy to filter your resources on AWS console.
+
+```hcl
+resource "aws_instance" "worker" {
+    count = 3
+    ...
+    tags {
+      Owner           = "Hackathon"
+      Name            = "worker-${count.index}"
+      ansibleFilter   = "Kubernetes01"
+      ansibleNodeType = "worker"
+      ansibleNodeName = "worker${count.index}"
+    }
+  }
+}
+```
+
+### A load balancer for Kubernetes API
+
+For High Availability, we have multiple instances running Kubernetes API server and we expose the control API using an external Elastic Load Balancer.
+
+```hcl
+resource "aws_elb" "kubernetes_api" {
+  name                      = "kube-api"
+  instances                 = ["${aws_instance.controller.*.id}"]
+  subnets                   = ["${aws_subnet.kubernetes.id}"]
+  cross_zone_load_balancing = false
+
+  security_groups = ["${aws_security_group.kubernetes_api.id}"]
+
+  listener {
+    lb_port           = 6443
+    instance_port     = 6443
+    lb_protocol       = "TCP"
+    instance_protocol = "TCP"
+  }
+
+  health_check {
+    healthy_threshold   = 2
+    unhealthy_threshold = 2
+    timeout             = 15
+    target              = "HTTP:8080/healthz"
+    interval            = 30
+  }
+}
+```
