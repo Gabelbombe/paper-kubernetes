@@ -50,7 +50,7 @@ Terraform and Ansible overlap. I will use Terraform to provision infrastructure 
 
 Terraform allow us to describe the target infrastructure; then it takes care to create, modify or destroy any required resource to match our blueprint. Regardless its declarative nature, Terraform allows some [programming patterns](https://github.com/ehime/paper-designpatterns/blob/master/README.md). In this project, resources are in grouped in files; constants are externalised as variables and we will use of templating. We are not going to use Terraform Modules.
 
-The code snippets have been simplified. Please refer to the [code repository](https://github.com/ehime/terraform-kubernetes) for the complete version.
+The code snippets have been simplified. Please refer to the [code repository](https://github.com/ehime/terraform-kubernetes/tree/master/terraform) for the complete version.
 
 
 #### Create VPC and networking layer
@@ -380,3 +380,17 @@ All hosts need the certificates we generated, for HTTPS.
 <img src='assets/k8snthw-components.png' />
 
 First of all, we have to install Python 2.5+ on all machines.
+
+
+### Ansible project organisation
+
+The Ansible part of the project is organised as suggested by Ansible documentation. We also have multiple playbooks, to run independently:
+
+- Bootstrap Ansible (install Python). Install, configure and start all the required components (infra.yaml)
+- Configure Kubernetes CLI (kubectl) on your machine (kubectl.yaml)
+- Setup internal routing between containers (kubernetes-routing.yaml)
+- Smoke test it, deploying a nginx service (kubernetes-nginx.yaml) + manual operations
+
+This section walks through the first playbook (infra.yml).
+
+The code snippets have been simplified. Please refer to the [code repository](https://github.com/ehime/terraform-kubernetes/tree/master/ansible) for the complete version.
