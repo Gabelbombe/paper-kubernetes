@@ -424,4 +424,38 @@ hostname_variable        = tag_ansibleNodeName
 
 Note we use instance tags to filter and identify hosts and we use IP addresses for connecting to the machines.
 
-A separate file defines groups, based on instance tags. It creates nicely named groups, `controller`, `etcd` and `worker` (we might have used groups weirdly called `tag_ansibleNodeType_worker...`). If we add new hosts to a group, this file remains untouched.
+A separate file defines groups, based on instance tags. It creates nicely named groups, `controller`, `etcd` and `worker` (we might have used groups weirdly called `tag_ansibleNodeType_worker`...). If we add new hosts to a group, this file remains untouched.
+
+```ini
+[tag_ansibleNodeType_etcd]
+[tag_ansibleNodeType_worker]
+[tag_ansibleNodeType_controller]
+
+[etcd:children]
+tag_ansibleNodeType_etcd
+
+[worker:children]
+tag_ansibleNodeType_worker
+
+[controller:children]
+tag_ansibleNodeType_controller
+```
+
+To make the inventory work, we put Dynamic Inventory Python script and configuration file in the same directory with groups file.
+
+```bash
+ansible/
+  hosts/
+    ec2.py
+    ec2.ini
+    groups
+```
+
+The final step is configuring Ansible to use this directory as inventory. In `ansible.cfg`:
+
+```ini
+[defaults]
+...
+inventory = ./hosts/
+...
+```
