@@ -354,6 +354,29 @@ CFSSL command line utility generates `.pem` files for CA certificate, server key
 Let's sum up the most significant simplifications introduced in this part of the project:
 
 - All instances are in a single, public subnet.
-- All instances are directly accessible from outside the VPC. No VPN, no Bastion (though, traffic is allowed only from a single, configurable IP).
+- All instances are directly accessible from outside the VPC. No ÂVPN, no Bastion (though, traffic is allowed only from a single, configurable IP).
 - Instances have static internal IP addresses. Any real-world environment should use DNS names and, possibly, dynamic IPs.
 - A single server certificate for all components and nodes.
+
+
+
+### Part 2: The Provisioner
+
+#### Installing Kubernetes
+
+We have at this point, created all AWS resources using Terraform. No Kubernetes component has been installed yet.
+
+We have 9 EC instances (hosts, in Ansible terms), 3 of each type (group, for Ansible):
+
+- **Controllers**: Kubernetes HA master
+  - Will run Kubernetes API Server, Controller Manager and Scheduler services
+- **Workers**: Kubernetes Nodes or Minions
+  - Will run Docker, Kubernetes Proxy and Kubelet services
+  - Will have [CNI](https://github.com/containernetworking/cni) installed for networking between containers
+- **etcd**: etcd 3 nodes cluster to maintain Kubernetes state
+
+All hosts need the certificates we generated, for HTTPS.
+
+<img src='assets/k8snthw-components.png' />
+
+First of all, we have to install Python 2.5+ on all machines.
