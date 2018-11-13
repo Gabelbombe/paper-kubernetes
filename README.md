@@ -16,17 +16,16 @@ This Kubernetes setup inspired by _[Kubernetes the Hard way](https://github.com/
 
 ### Target platform
 
-<img style='float:right' src='assets/k8snthw-infrastructure.png' />
+<div style='width:800px; margin: 0 auto;'>
+  <div style='width: 200px; height: 400px; float: left;'>
+  Our target Kubernetes cluster includes:
 
-<div style='float:left'>
-Infrastructure
-
-Our target Kubernetes cluster includes:
-
-- 3 EC2 instances for Kubernetes Control Plane: Controller Manager, Scheduler, API Server.
-- 3 EC2 instances for the HA etcd cluster.
-- 3 EC2 instances as Kubernetes workers (aka Minions or Nodes, in Kubernetes jargon)
-- Container networking using Kubenet plugin (relying on CNI)
-- HTTPS communication between all components
-- All Kubernetes and etcd components run as services directly in the VM (not in Containers).
+  - 3 EC2 instances for Kubernetes Control Plane: _Controller Manager, Scheduler, API Server._
+  - 3 EC2 instances for the HA etcd cluster.
+  - 3 EC2 instances as Kubernetes workers (aka Minions or Nodes, in Kubernetes jargon)
+  - Container networking using Kubenet plugin (relying on [CNI](https://github.com/containernetworking/cni))
+  - HTTPS communication between all components
+  - All Kubernetes and etcd components run as services directly in the VM (not in Containers).
+  </div>
+  <img style='float:right;' src='assets/k8snthw-infrastructure.png' />
 </div>
