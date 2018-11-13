@@ -459,3 +459,22 @@ The final step is configuring Ansible to use this directory as inventory. In `an
 inventory = ./hosts/
 ...
 ```
+
+### Bootstrapping Ansible
+
+Now we are ready to execute the playbook (`infra.yaml`) to install all components. The first step is installing Python on all boxes with a raw module. It executes a shell command remotely, via SSH, with no bell and whistle.
+
+```yml
+- hosts: all
+  gather_facts: false
+
+  tasks:
+  - name: Update distros
+    raw: "apt-get update -y"
+    become: true
+    retries: 10
+    delay: 20
+
+  - name: Install Python
+    raw: "apt-get -y -q install python"
+    become: true
