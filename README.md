@@ -1,6 +1,8 @@
 # Let's build Kubernetes from A-Z with Terraform and Ansible
 
-### The goal
+### Part 1: The Infrastructure
+
+#### The goal
 
 The purpose of this series of articles is presenting a simple, but realistic example of how to provision a Kubernetes cluster on AWS, using Terraform and Ansible. This is an educational tool, not a production-ready solution nor a simple way to quickly deploy Kubernetes.
 
@@ -9,12 +11,12 @@ I will walk through the sample project, describing the steps to automatise the p
 The complete working project is available here: [terraform-kubernetes](https://github.com/ehime/terraform-kubernetes). Please, read the documentation included in the repository, describing requirements and step by step process to execute it.
 
 
-### Starting point
+#### Starting point
 
 This Kubernetes setup inspired by _[Kubernetes the Hard way](https://github.com/kelseyhightower/kubernetes-the-hard-way)_, by [Kelsey Hightower](https://github.com/kelseyhightower) from Google. The original tutorial is for Google Cloud. My goal is demonstrating how to automate the process on AWS, so I "translated" it to AWS and transformed the manual steps into Terraform and Ansible code.
 
 
-### Target platform
+#### Target platform
 
 <div style='width:800px; margin: 0 auto;'>
   <div style='width: 200px; height: 400px; float: left;'>
@@ -33,7 +35,7 @@ This Kubernetes setup inspired by _[Kubernetes the Hard way](https://github.com/
 <div style="clear:both; padding-top:200px"/>
 
 
-### Automation Tools
+#### Automation Tools
 
 For our example I'll be using [Terraform](https://www.terraform.io/intro/index.html) and [Ansible](http://docs.ansible.com/ansible/intro.html) for many reasons:
 
@@ -44,14 +46,14 @@ For our example I'll be using [Terraform](https://www.terraform.io/intro/index.h
 Terraform and Ansible overlap. I will use Terraform to provision infrastructure resources, then pass the baton to Ansible, to install and configure software components.
 
 
-### Terraform to provision infrastructure
+#### Terraform to provision infrastructure
 
 Terraform allow us to describe the target infrastructure; then it takes care to create, modify or destroy any required resource to match our blueprint. Regardless its declarative nature, Terraform allows some [programming patterns](https://github.com/ehime/paper-designpatterns/blob/master/README.md). In this project, resources are in grouped in files; constants are externalised as variables and we will use of templating. We are not going to use Terraform Modules.
 
 The code snippets have been simplified. Please refer to the [code repository](https://github.com/ehime/terraform-kubernetes) for the complete version.
 
 
-### Create VPC and networking layer
+#### Create VPC and networking layer
 
 After specifying the AWS provider and the region (omitted here), the first step is defining the VPC, the single subnet and an Internet Gateway.
 
@@ -99,9 +101,9 @@ resource "aws_key_pair" "default_keypair" {
 ```
 
 
-### Create EC2 Instances
+#### Create EC2 Instances
 
-I’m using an official AMI for Ubuntu 16.04 to keep it simple. Here is, for example, the definition of `etcd` instances.
+I'm using an official AMI for Ubuntu 16.04 to keep it simple. Here is, for example, the definition of `etcd` instances.
 
 ```hcl
 variable "deletion_protection" {
@@ -161,23 +163,23 @@ resource "aws_iam_instance_profile" "kubernetes" {
 }
 ```
 
-### Static vs. dynamic IP address vs. internal DNS
+#### Static vs. dynamic IP address vs. internal DNS
 
-Instances have a static private IP address. I’m using a simple address pattern to make them human-friendly: 10.43.0.1x are etcd instances, `10.43.0.2x` Controllers and `10.43.0.3x` Workers (aka Kubernetes Nodes or Minions), but this is not a requirement.
+Instances have a static private IP address. I'm using a simple address pattern to make them human-friendly: 10.43.0.1x are etcd instances, `10.43.0.2x` Controllers and `10.43.0.3x` Workers (aka Kubernetes Nodes or Minions), but this is not a requirement.
 
 A static address is required to have a fixed "handle" for each instance. In a big project, you have to create and maintain a “map” of assigned IPs  and be careful to avoid clashes. It sounds easy, but it could become messy in a big project. On the flip side, dynamic IP addresses change if (when) VMs restart for any uncontrollable event (hardware failure, the provider moving to different physical hardware, etc.), therefore DNS entry must be managed by the VM, not by Terraform... but this a different story.
 
 Real-world projects use internal DNS names as stable handles, not static IP. But to keep this project simple, I will use static IP addresses, assigned by Terraform, and no DNS.
 
 
-### Installing Python 2.x?
+#### Installing Python 2.x?
 
 Ansible requires Python 2.5+ on managed machines. Ubuntu 16.04 comes with Python 3 that not compatible with Ansible and  we have to install it before running any playbook.
 
 Terraform has a `remote-exec` provisioner. We might execute `apt-get install python...` on the newly provisioned instances. But the provisioner is not very smart. So, the option I adopted is making Ansible _"pulling itself over the fence by its bootstraps"_, and install Python with a raw module.
 
 
-### Resource tagging
+#### Resource tagging
 
 Every resource has multiple tags assigned (omitted in the snippets, above):
 
@@ -202,7 +204,7 @@ resource "aws_instance" "worker" {
 }
 ```
 
-### A load balancer for Kubernetes API
+#### A load balancer for Kubernetes API
 
 For High Availability, we have multiple instances running Kubernetes API server and we expose the control API using an external Elastic Load Balancer.
 
@@ -234,7 +236,7 @@ resource "aws_elb" "kubernetes_api" {
 
 The ELB works at TCP level (layer 4), forwarding connection to the destination. The HTTPS connection is terminated by the service, not by the ELB. The ELB need no certificate.
 
-### Security
+#### Security
 
 The security is very simplified in this project. We have two Security Groups: one for all instances and another for the Kubernetes API Load Balancer (some rule omitted here).
 
@@ -303,11 +305,11 @@ All instances are directly accessible from outside the VPC: not acceptable for a
 No matter how lax, this configuration is tighter than the default security set up by [Kubernetes cluster creation script](http://kubernetes.io/docs/getting-started-guides/aws/).
 
 
-### Self-signed Certificates
+#### Self-signed Certificates
 
 Communication between Kubernetes components and control API, all use HTTPS. We need a server certificate for it. It is self-signed with our own private CA. Terraform generates a CA certificate, a server key+certificate and signs the latter with the CA. The process uses [CFSSL](https://github.com/cloudflare/cfssl).
 
-The interesting point here is the template-based generation of certificates. I’m using [Data Sources](https://www.terraform.io/docs/configuration/data-sources.html), a feature introduced by Terraform 0.7.
+The interesting point here is the template-based generation of certificates. I'm using [Data Sources](https://www.terraform.io/docs/configuration/data-sources.html), a feature introduced by Terraform 0.7.
 
 
 ```hcl
@@ -341,3 +343,17 @@ resource "null_resource" "certificates" {
   }
 }
 ```
+
+All components use the same certificate, so it has to include all addresses (IP and/or DNS names). In a real-world project, we would use stable DNS names, and the certificate would include them only.
+
+CFSSL command line utility generates `.pem` files for CA certificate, server key and certificate. In the following articles, we will see how they are uploaded into all machines and used by Kubernetes CLI to connect to the API.
+
+
+#### Known simplifications and limitations
+
+Let's sum up the most significant simplifications introduced in this part of the project:
+
+- All instances are in a single, public subnet.
+- All instances are directly accessible from outside the VPC. No VPN, no Bastion (though, traffic is allowed only from a single, configurable IP).
+- Instances have static internal IP addresses. Any real-world environment should use DNS names and, possibly, dynamic IPs.
+- A single server certificate for all components and nodes.
