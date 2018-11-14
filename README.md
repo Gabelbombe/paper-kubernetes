@@ -739,11 +739,13 @@ $ sudo iptables -t nat -A POSTROUTING ! -d 10.0.0.0/8 -o eth0 -j MASQUERADE
 The last step is a smoke test. We launch multiple nginx containers in the cluster, then create a Service exposed as NodePort (a random port, the same on every Worker node). The are three local shell commands. The `kubernetes-nginx.yml`) is the Ansible version of them.
 
 ```bash
-$ kubectl run nginx --image=nginx --port=80 --replicas=3
+$ kubectl create deployment nginx --image=nginx --generator=deployment-basic/v1beta1
 ...
-$ kubectl expose deployment nginx --type NodePort
+$ kubectl scale deployment nginx --replicas 3
 ...
-$ kubectl get svc nginx --output=jsonpath='{range .spec.ports[0]}{.nodePort}'
+$ kubectl expose deployment nginx --port=80 --type=LoadBalancer
+...
+$ kubectl get service nginx --output=jsonpath='{range .spec.ports[0]}{.nodePort}'
 32700
 ```
 
@@ -771,3 +773,14 @@ $ curl http://<worker0-ip-address>:<port>
 ### Conclusions
 
 There is a lot of space for improvement to make it more realistic, using DNS names, a VPN or a bastion, moving Instances in private subnets. A network overlay (Flannel) would be another improvement. Modifying the project to add these enhancements might be a good learning exercise.
+
+
+
+### Helpful Links
+
+- [Kubernetes Examples](https://github.com/kubernetes/examples)
+- [Using kubectl to Create a Deployment](https://kubernetes.io/docs/tutorials/kubernetes-basics/deploy-app/deploy-intro/)
+- [kubectl for Docker Users](https://kubernetes.io/docs/reference/kubectl/docker-cli-to-kubectl/)
+- [Upgrade Path to Kubernetes v1.4.0](https://github.com/kelseyhightower/kubernetes-the-hard-way/tree/fa9972740b3228a17b2c2fa74e51be2fcefa2e7a)
+- [Kubernetes Cheat Sheet](https://kubernetes.io/docs/reference/kubectl/cheatsheet/)
+-
