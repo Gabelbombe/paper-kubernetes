@@ -701,7 +701,7 @@ Kubernetes uses subnets for networking between Pods. These subnets have nothing 
 
 Our VPC subnet is `10.43.0.0/16`, while the Pod subnets are part of `10.200.0.0/16` (`10.200.1.0/24`, `10.200.2.0/24` etc.). We have to setup routes between workers instances for these subnets.
 
-<img src='assets/k8snthw-networking' />
+<img src='assets/k8snthw-networking.png' />
 
 As we are using the `Kubenet` [network plugin](http://kubernetes.io/docs/admin/network-plugins/#kubenet), Pod subnets are dynamically assigned. Kube Controller decides Pod subnets within a Pod Cluster CIDR (defined by 1 parameter on `kube-controller-manager` startup). Subnets are dynamically assigned and we cannot configure these routes at provisioning time, using Terraform. We have to wait until all Kubernetes components are up and running, discover Pod subnets querying Kubernetes API and then add the routes.
 
