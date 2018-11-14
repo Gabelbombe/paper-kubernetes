@@ -627,6 +627,7 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
+
 ### Known simplifications
 
 The most significant simplifications, compared to a real world project, concern two aspects:
@@ -638,7 +639,6 @@ The most significant simplifications, compared to a real world project, concern 
 
 
 ## Part 3: Controlling Kubernetes
-
 
 At this point we have completed installation of Kubernetes components. There is still one important step: setting up the routing between Workers (aka Nodes or Minions) to allow Pods living on different machines to talk each other. As a final smoke test, we’ll deploy a nginx service.
 
@@ -694,6 +694,7 @@ etcd-1               Healthy   {"health": "true"}
 etcd-0               Healthy   {"health": "true"}
 ```
 
+
 ### Setup internal routing
 
 Kubernetes uses subnets for networking between Pods. These subnets have nothing to do with the subnet we defined in AWS.
@@ -701,3 +702,72 @@ Kubernetes uses subnets for networking between Pods. These subnets have nothing 
 Our VPC subnet is `10.43.0.0/16`, while the Pod subnets are part of `10.200.0.0/16` (`10.200.1.0/24`, `10.200.2.0/24` etc.). We have to setup routes between workers instances for these subnets.
 
 <img src='assets/k8snthw-networking' />
+
+As we are using the `Kubenet` [network plugin](http://kubernetes.io/docs/admin/network-plugins/#kubenet), Pod subnets are dynamically assigned. Kube Controller decides Pod subnets within a Pod Cluster CIDR (defined by 1 parameter on `kube-controller-manager` startup). Subnets are dynamically assigned and we cannot configure these routes at provisioning time, using Terraform. We have to wait until all Kubernetes components are up and running, discover Pod subnets querying Kubernetes API and then add the routes.
+
+In Ansible, we might use the `ec2_vpc_route_table` module to modify AWS Route Tables, but this would interfere with route tables managed by Terraform. Due to its stateful nature, tampering with Terraform managed resources is not a good idea.
+
+The solution (hack?) adopted here is adding new routes directly to the machines, after discovering Pod subnets, using `kubectl`. It is the job of `kubernetes-routing.yml` playbook, the Ansible translation of the following steps:
+
+Query Kubernetes API for Workers Pod subnets. Actual Pod subnets (the second column) may be different, but they are not necessarily assigned following Workers numbering.
+
+
+```bash
+$ kubectl get nodes --output=jsonpath='{range .items[*]}{.status.addresses[?(@.type=="InternalIP")].address}{.spec.podCIDR}{"\n"}{end}'
+10.43.0.30 10.200.2.0/24
+10.43.0.31 10.200.0.0/24
+10.43.0.32 10.200.1.0/24
+```
+
+Then, on each Worker, add routes for Pod subnets to the owning Node
+
+```bash
+$ sudo route add -net 10.200.2.0 netmask 255.255.255.0 gw 10.43.0.30 metric 1
+$ sudo route add -net 10.200.0.0 netmask 255.255.255.0 gw 10.43.0.31 metric 1
+$ sudo route add -net 10.200.1.0 netmask 255.255.255.0 gw 10.43.0.32 metric 1
+```
+
+... and add an IP Tables rule to avoid internal traffic being routed through the Internet Gateway:
+
+```bash
+$ sudo iptables -t nat -A POSTROUTING ! -d 10.0.0.0/8 -o eth0 -j MASQUERADE
+```
+
+
+### Smoke test the system, deploying nginx
+
+The last step is a smoke test. We launch multiple nginx containers in the cluster, then create a Service exposed as NodePort (a random port, the same on every Worker node). The are three local shell commands. The `kubernetes-nginx.yml`) is the Ansible version of them.
+
+```bash
+$ kubectl run nginx --image=nginx --port=80 --replicas=3
+...
+$ kubectl expose deployment nginx --type NodePort
+...
+$ kubectl get svc nginx --output=jsonpath='{range .spec.ports[0]}{.nodePort}'
+32700
+```
+
+The final step is manual (no playbook!). To test the service we fetch the default page from nginx.
+
+All Workers nodes directly expose the Service. Get the exposed port from the last command you run, get Workers public IP addresses from Terraform output.
+
+This should work for all the Workers:
+
+```bash
+$ curl http://<worker0-ip-address>:<port>
+<!DOCTYPE html>
+<html>
+<head>
+<title>Welcome to nginx!</title>
+...
+```
+
+### Known Simplifications
+
+- The way we set routing for Pod networks is hacky and fragile. If a Workers restarts or if we add new Workers, you have to recalculate Pod subnets routes and update them on all Workers. In real production projects, you’d better use a network overlay with [Flannel](https://coreos.com/blog/introducing-rudder/).
+- Compared to the [original tutorial](https://github.com/kelseyhightower/kubernetes-the-hard-way), we skipped deploying DNS Cluster add-on.
+
+
+### Conclusions
+
+There is a lot of space for improvement to make it more realistic, using DNS names, a VPN or a bastion, moving Instances in private subnets. A network overlay (Flannel) would be another improvement. Modifying the project to add these enhancements might be a good learning exercise.
