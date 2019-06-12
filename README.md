@@ -8,7 +8,7 @@ The purpose of this series of articles is presenting a simple, but realistic exa
 
 I will walk through the sample project, describing the steps to automatise the process of provisioning simple Kubernetes setup on AWS, trying to make clear most of the simplifications and corners cut. To follow it, you need some basic understanding of AWS, Terraform, Ansible and Kubernetes.
 
-The complete working project is available here: [terraform-kubernetes](https://github.com/ehime/terraform-kubernetes). Please, read the documentation included in the repository, describing requirements and step by step process to execute it.
+The complete working project is available here: [terraform-kubernetes](https://github.com/dodomeki/terraform-kubernetes). Please, read the documentation included in the repository, describing requirements and step by step process to execute it.
 
 
 ### Starting point
@@ -48,9 +48,9 @@ Terraform and Ansible overlap. I will use Terraform to provision infrastructure 
 
 ### Terraform to provision infrastructure
 
-Terraform allow us to describe the target infrastructure; then it takes care to create, modify or destroy any required resource to match our blueprint. Regardless its declarative nature, Terraform allows some [programming patterns](https://github.com/ehime/paper-designpatterns/blob/master/README.md). In this project, resources are in grouped in files; constants are externalised as variables and we will use of templating. We are not going to use Terraform Modules.
+Terraform allow us to describe the target infrastructure; then it takes care to create, modify or destroy any required resource to match our blueprint. Regardless its declarative nature, Terraform allows some [programming patterns](https://github.com/dodomeki/paper-designpatterns/blob/master/README.md). In this project, resources are in grouped in files; constants are externalised as variables and we will use of templating. We are not going to use Terraform Modules.
 
-The code snippets have been simplified. Please refer to the [code repository](https://github.com/ehime/terraform-kubernetes/tree/master/terraform) for the complete version.
+The code snippets have been simplified. Please refer to the [code repository](https://github.com/dodomeki/terraform-kubernetes/tree/master/terraform) for the complete version.
 
 
 ### Create VPC and networking layer
@@ -66,7 +66,7 @@ resource "aws_vpc" "kubernetes" {
 resource "aws_subnet" "kubernetes" {
   vpc_id            = "${aws_vpc.kubernetes.id}"
   cidr_block        = "10.43.0.0/16"
-  availability_zone = "us-east-1a"
+  availability_zone = "eu-west-1a"
 }
 ```
 
@@ -91,7 +91,7 @@ resource "aws_route_table_association" "kubernetes" {
 }
 ```
 
-We also have to import the Key-pair that will be used for all Instances, to be able to SSH into them. The Public Key must correspond to the Identity file loaded into SSH Agent (please, see the [README](https://github.com/ehime/terraform-kubernetes/blob/master/README.md) for more details)
+We also have to import the Key-pair that will be used for all Instances, to be able to SSH into them. The Public Key must correspond to the Identity file loaded into SSH Agent (please, see the [README](https://github.com/dodomeki/terraform-kubernetes/blob/master/README.md) for more details)
 
 ```hcl
 resource "aws_key_pair" "default_keypair" {
@@ -120,7 +120,7 @@ resource "aws_instance" "etcd" {
   private_ip                  = "${cidrhost("10.43.0.0/16", 10 + count.index)}"
   associate_public_ip_address = true
 
-  availability_zone      = "us-east-1a"
+  availability_zone      = "eu-west-1a"
   vpc_security_group_ids = ["${aws_security_group.kubernetes.id}"]
   key_name               = "my-keypair"
 }
@@ -129,32 +129,38 @@ resource "aws_instance" "etcd" {
 Other instances, `controller` and `worker`, are no different, except for one important detail: Workers have `source_dest_check = false` to allow sending packets from IPs not matching the IP assigned to the machine by AWS (for Inter-Container communication).
 
 ```hcl
+data "aws_iam_policy_document" "kubernetes_assume_role_policy" {
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["ec2.amazonaws.com"]
+    }
+  }
+}
+
+data "aws_iam_policy_document" "kubernetes_actions_policy" {
+  statement {
+    actions = ["ec2:*", "elasticloadbalancing:*", "route53:*", "ecr:*"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["*"]
+    }
+  }
+}
+
 resource "aws_iam_role" "kubernetes" {
   name = "kubernetes"
-
-  assume_role_policy = <<EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [ { "Effect": "Allow", "Principal": { "Service": "ec2.amazonaws.com" }, "Action": "sts:AssumeRole" } ]
-}
-EOF
+  assume_role_policy = "${data.aws_iam_policy_document.kubernetes_assume_role_policy.json}"
 }
 
 resource "aws_iam_role_policy" "kubernetes" {
   name = "kubernetes"
   role = "${aws_iam_role.kubernetes.id}"
 
-  policy = <<EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    { "Action" : ["ec2:*"], "Effect": "Allow", "Resource": ["*"] },
-    { "Action" : ["elasticloadbalancing:*"], "Effect": "Allow", "Resource": ["*"] },
-    { "Action": "route53:*", "Effect": "Allow",  "Resource": ["*"] },
-    { "Action": "ecr:*", "Effect": "Allow", "Resource": "*" }
-  ]
-}
-EOF
+  policy = "${data.aws_iam_policy_document.kubernetes_actions_policy.json}"
 }
 
 resource "aws_iam_instance_profile" "kubernetes" {
@@ -300,7 +306,7 @@ resource "aws_security_group" "kubernetes_api" {
 }
 ```
 
-All instances are directly accessible from outside the VPC: not acceptable for any production environment. But security is not entirely lax: inbound traffic is allowed only from one IP address: the public IP address you are connecting from. This address is configured by the Terraform variable `control_cidr`. Please, read the [project documentation](https://github.com/ehime/terraform-kubernetes/blob/master/README.md) for further explanations.
+All instances are directly accessible from outside the VPC: not acceptable for any production environment. But security is not entirely lax: inbound traffic is allowed only from one IP address: the public IP address you are connecting from. This address is configured by the Terraform variable `control_cidr`. Please, read the [project documentation](https://github.com/dodomeki/terraform-kubernetes/blob/master/README.md) for further explanations.
 
 No matter how lax, this configuration is tighter than the default security set up by [Kubernetes cluster creation script](http://kubernetes.io/docs/getting-started-guides/aws/).
 
@@ -396,7 +402,7 @@ The Ansible part of the project is organised as [suggested by Ansible documentat
 
 This section walks through the first playbook (`infra.yml`).
 
-The code snippets have been simplified. Please refer to the [code repository](https://github.com/ehime/terraform-kubernetes/tree/master/ansible) for the complete version.
+The code snippets have been simplified. Please refer to the [code repository](https://github.com/dodomeki/terraform-kubernetes/tree/master/ansible) for the complete version.
 
 
 ### Installing Kubernetes components
@@ -419,7 +425,7 @@ The configuration file `ec2.ini`, downloaded from Ansible repo, requires some ch
 ```ini
 [ec2]
 instance_filters         = tag:ansibleFilter=Kubernetes01
-regions                  = us-east-1
+regions                  = eu-west-1
 destination_variable     = ip_address
 vpc_destination_variable = ip_address
 hostname_variable        = tag_ansibleNodeName
@@ -678,7 +684,7 @@ Setting up the client requires running few shell commands. The save the API endp
 The client uses the CA certificate, generated by Terraform. User and token must match those in the token file  (`token.csv`), also used for Kubernetes API Server setup. The API load balancer DNS name must be passed to the playbook as a parameter.
 
 ```bash
-$ ansible-playbook kubectl.yaml --extra-vars "kubernetes_api_endpoint=kube-375210502.us-east-1.elb.amazonaws.com"
+$ ansible-playbook kubectl.yaml --extra-vars "kubernetes_api_endpoint=kube-375210502.eu-west-1.elb.amazonaws.com"
 ```
 
 Kubernetes CLI is now configured, and we may use `kubectl` to control the cluster.
